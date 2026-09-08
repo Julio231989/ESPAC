@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="es-EC">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>ESPAC 2026 · Campo</title>
+<meta name="description" content="App unificada de campo: sedes, plan del día, georreferencia ML, cobertura MA/ML y track de supervisión — operativo ESPAC 2026.">
+<meta name="theme-color" content="#1E3A6F">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ESPAC 2026">
+<meta name="author" content="Julio Márquez">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div id="toast-host"></div>
+  <div id="app">
+    <div class="center-screen">
+      <div class="logo-wrap">
+        <div class="logo-mark"><img src="icons/icon-192.png" alt="ESPAC 2026"></div>
+        <div class="eyebrow">ESPAC 2026 · Campo</div>
+        <h1 class="title-hero">Cargando catálogos…</h1>
+        <p class="sub-hero">Provincias, cantones y marco de lista.</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/db.js"></script>
+  <script src="js/catalog.js"></script>
+  <script src="js/geo.js"></script>
+  <script src="js/camera.js"></script>
+  <script src="js/sync.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
