@@ -3,7 +3,7 @@
    Incrementar CACHE_VERSION cuando se publique una nueva versión para
    forzar la actualización del app shell en los dispositivos de campo.
    ========================================================================= */
-const CACHE_VERSION = 'espac-campo-v12';
+const CACHE_VERSION = 'espac-campo-v13';
 const CORE_ASSETS = [
   './',
   './index.html',

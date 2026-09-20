@@ -137,11 +137,16 @@ function bindGpsBox(prefix) {
     status.textContent = 'Obteniendo señal GPS de alta precisión…';
     try {
       const p = await Geo.capturePoint({
-        onUpdate: (reading) => { status.textContent = `Precisión actual: ${Math.round(reading.acc)} m (se requiere ≤ 30 m)`; }
+        onUpdate: (reading) => { status.textContent = `Precisión actual: ${Math.round(reading.acc)} m (objetivo ≤ 30 m) — puede tardar más sin conexión`; }
       });
       point = p;
-      status.className = 'gps-status good';
-      status.innerHTML = `✓ Punto capturado — precisión ${Math.round(p.acc)} m<br>${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}`;
+      if (p.precise) {
+        status.className = 'gps-status good';
+        status.innerHTML = `✓ Punto capturado — precisión ${Math.round(p.acc)} m<br>${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}`;
+      } else {
+        status.className = 'gps-status bad';
+        status.innerHTML = `⚠ Punto capturado fuera del objetivo — precisión ${Math.round(p.acc)} m<br>${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}<br>Puede guardarlo así o volver a capturar en espacio más abierto.`;
+      }
       btn.textContent = 'Volver a capturar';
     } catch (e) {
       status.className = 'gps-status bad';

@@ -1,12 +1,20 @@
 /* =========================================================================
    geo.js — Captura GPS
-   1) capturePoint(): punto único con umbral de precisión ≤30 m (igual que
-      la constraint sugerida en los XLSForm de sedes / georreferencia ML).
+   1) capturePoint(): punto único, con objetivo de precisión ≤30 m (igual
+      que la constraint sugerida en los XLSForm de sedes / georreferencia
+      ML). En modo avión / sin datos, el GPS del teléfono sigue funcionando
+      (usa solo satélites), pero un "cold start" sin asistencia de red
+      (A-GPS) puede tardar bastante más que con conexión — por eso la
+      ventana de espera es más larga y, si no se alcanza el umbral de 30 m
+      a tiempo, igual se acepta la mejor lectura obtenida en vez de
+      bloquear el registro (queda marcada como "fuera de objetivo" para
+      que el encuestador decida si reintentar).
    2) trackPing(): muestreo continuo de 3 segundos para el track de
       supervisión mañana/tarde — se guarda la lectura de mejor precisión.
    ========================================================================= */
 const Geo = {
-  ACCURACY_THRESHOLD: 30, // metros
+  ACCURACY_THRESHOLD: 30, // metros — objetivo, no bloqueante
+  CAPTURE_TIMEOUT_MS: 60000, // 60 s: cubre un "cold start" de GPS sin A-GPS (offline)
 
   capturePoint({ onUpdate } = {}) {
     return new Promise((resolve, reject) => {
@@ -18,9 +26,12 @@ const Geo = {
       let best = null;
       const timeout = setTimeout(() => {
         if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-        if (best) resolve(best);
-        else reject(new Error('No se obtuvo señal GPS a tiempo. Intente en un espacio abierto.'));
-      }, 25000);
+        if (best) {
+          resolve({ ...best, precise: best.acc <= Geo.ACCURACY_THRESHOLD });
+        } else {
+          reject(new Error('No se obtuvo ninguna señal GPS en 60 s. Verifique que la ubicación esté activada y, si está sin conexión, aléjese de techos/paredes — el primer punto sin internet puede tardar más.'));
+        }
+      }, Geo.CAPTURE_TIMEOUT_MS);
 
       watchId = navigator.geolocation.watchPosition((pos) => {
         const reading = {
@@ -35,13 +46,13 @@ const Geo = {
         if (reading.acc <= Geo.ACCURACY_THRESHOLD) {
           clearTimeout(timeout);
           navigator.geolocation.clearWatch(watchId);
-          resolve(reading);
+          resolve({ ...reading, precise: true });
         }
       }, (err) => {
         clearTimeout(timeout);
         if (watchId !== null) navigator.geolocation.clearWatch(watchId);
         reject(err);
-      }, { enableHighAccuracy: true, maximumAge: 0, timeout: 25000 });
+      }, { enableHighAccuracy: true, maximumAge: 0, timeout: Geo.CAPTURE_TIMEOUT_MS });
     });
   },
 
