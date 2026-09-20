@@ -6,7 +6,7 @@
    el registro local como sincronizado — si no hay red o el backend falla,
    el registro queda pendiente y se reintenta en la próxima sincronización.
    ========================================================================= */
-const SYNC_STORES = ['sedes', 'plan_diario', 'georef', 'cobertura_ma', 'cobertura_ml', 'tracking'];
+const SYNC_STORES = ['georef']; // única tabla de esta versión de propósito único
 
 const Sync = {
   async getEndpoint() {
@@ -84,5 +84,72 @@ const Sync = {
     }
     if (state.sent > 0) await cfgSet('last_sync_at', new Date().toISOString());
     return state;
+  },
+};
+
+/* =========================================================================
+   AutoSync — sincronización automática en segundo plano, sin que el
+   encuestador tenga que abrir la pantalla de sincronización ni presionar
+   nada. Capas de respaldo (se complementan, no se excluyen):
+     1) Intento inmediato tras guardar un registro (AutoSync.kick()),
+        por si ya hay señal en ese instante.
+     2) Evento 'online' del navegador — se dispara al recuperar conexión.
+     3) 'visibilitychange' — al volver a primer plano la app (p. ej. tras
+        salir de un predio y desbloquear el teléfono).
+     4) Verificación periódica cada 45 s mientras la app está abierta,
+        para redes intermitentes que no siempre disparan 'online'.
+     5) Background Sync API (reg.sync), cuando el navegador la soporta
+        (Chrome/Edge en Android): permite reintentar el envío aunque la
+        pestaña esté cerrada o en segundo plano. iOS/Safari no la
+        implementa — ahí rigen únicamente las capas 1-4, que solo actúan
+        con la app abierta en algún momento.
+   Nunca interrumpe al encuestador: no hay diálogos ni bloqueos; solo un
+   toast breve cuando efectivamente se envía algo.
+   ========================================================================= */
+const AutoSync = {
+  _running: false,
+  _timer: null,
+
+  init() {
+    window.addEventListener('online', () => this.trigger('online'));
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') this.trigger('visible');
+    });
+    if (!this._timer) this._timer = setInterval(() => this.trigger('watchdog'), 45000);
+    this.trigger('arranque');
+  },
+
+  /* Llamar justo después de guardar cualquier registro localmente. */
+  kick() {
+    this._registerBackgroundSync();
+    this.trigger('registro-nuevo');
+  },
+
+  async trigger(reason) {
+    if (this._running || !navigator.onLine) return;
+    const endpoint = await Sync.getEndpoint();
+    if (!endpoint) return; // sin backend configurado aún: nada que enviar
+    this._running = true;
+    try {
+      let pending = 0;
+      for (const st of SYNC_STORES) pending += (await dbAll(st)).filter(r => !r._synced).length;
+      if (pending === 0) return;
+      const result = await Sync.syncAll();
+      if (result.sent > 0) {
+        toast(`${result.sent} registro(s) sincronizado(s) automáticamente.`, 'ok');
+        if (typeof State !== 'undefined' && ['home', 'georef', 'sync'].includes(State.route)) render();
+      }
+    } catch (e) {
+      console.warn('[ESPAC autosync]', reason, e && e.message ? e.message : e);
+    } finally {
+      this._running = false;
+    }
+  },
+
+  _registerBackgroundSync() {
+    if (!('serviceWorker' in navigator) || !('SyncManager' in window)) return;
+    navigator.serviceWorker.ready.then(reg => {
+      if (reg.sync) reg.sync.register('espac-sync').catch(() => {});
+    }).catch(() => {});
   },
 };

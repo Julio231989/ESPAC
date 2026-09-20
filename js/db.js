@@ -1,12 +1,15 @@
 /* =========================================================================
    db.js — Persistencia local offline-first (IndexedDB)
-   Stores: sedes, georef, cobertura_ma, cobertura_ml, tracking, plan_diario, config
-   Cada registro guarda _synced:false hasta que exista integración real
-   con Google Sheets / Apps Script (fase siguiente del proyecto).
+   Stores: georef, config. Versión de propósito único (solo Georreferencia
+   ML): si el dispositivo traía una versión anterior con más tablas
+   (sedes, cobertura_ma, cobertura_ml, tracking, plan_diario), esas quedan
+   intactas pero sin uso — no se leen ni se sincronizan desde aquí.
+   Cada registro de "georef" guarda _synced:false hasta que AutoSync (ver
+   sync.js) confirme el envío a Google Sheets / Apps Script.
    ========================================================================= */
 const DB_NAME = 'espac_campo_db';
-const DB_VERSION = 2;
-const STORES = ['sedes', 'georef', 'cobertura_ma', 'cobertura_ml', 'tracking', 'plan_diario', 'config'];
+const DB_VERSION = 3;
+const STORES = ['georef', 'config'];
 
 let _dbPromise = null;
 

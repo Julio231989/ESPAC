@@ -1,7 +1,7 @@
 {
-  "name": "ESPAC 2026 · Campo",
-  "short_name": "ESPAC 2026",
-  "description": "Aplicación de campo unificada para sedes, plan del día, georreferencia ML, cobertura MA/ML y track de supervisión del operativo ESPAC 2026.",
+  "name": "ESPAC 2026 · Georreferencia ML",
+  "short_name": "ESPAC ML",
+  "description": "Captura offline, por el encuestador de lista, de la coordenada de cada cuestionario del marco de lista (ML) del operativo ESPAC 2026, con sincronización automática.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
