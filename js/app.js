@@ -294,7 +294,9 @@ function bindGeorefScreen() {
     const found = Catalog.cuestionario_ml.filter(x => x.p === provincia && x.cod === cod);
     if (found.length === 1) {
       matched = found[0];
-      hintEl.textContent = `✓ Coincide con el marco de lista: ${matched.n}`;
+      const provName = (Catalog.provincias.find(p => p.c === provincia) || {}).n || provincia;
+      const supTxt = matched.sup != null ? `${matched.sup.toLocaleString('es-EC')} m²` : 'superficie no registrada';
+      hintEl.textContent = `✓ Coincide con el marco de lista: Cantón ${matched.ct.slice(2)} · Parroquia ${matched.pq} · ${provName} · ${supTxt}`;
       hintEl.className = 'hint good';
     } else if (found.length > 1) {
       hintEl.textContent = `⚠ ${found.length} coincidencias para este número en la provincia. Verifique con su supervisor.`;
