@@ -3,7 +3,7 @@
    Incrementar CACHE_VERSION cuando se publique una nueva versión para
    forzar la actualización del app shell en los dispositivos de campo.
    ========================================================================= */
-const CACHE_VERSION = 'espac-campo-v13';
+const CACHE_VERSION = 'espac-campo-v16';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -21,10 +21,38 @@ const CORE_ASSETS = [
   './icons/logo-horizontal.png',
 ];
 
+/* La instalación cachea cada archivo por separado (no con cache.addAll,
+   que es atómico: si UN solo archivo fallara al descargarse — un hipo de
+   red, un 404 pasajero — toda la instalación del Service Worker aborta
+   en silencio y el dispositivo se queda SIN soporte offline, sin ningún
+   aviso, hasta que alguna futura carga logre traer los 14 archivos a la
+   vez). Aquí cada archivo se cachea de forma independiente: si uno falla,
+   se registra en consola y el resto sigue cacheándose con normalidad. */
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_VERSION).then((cache) => cache.addAll(CORE_ASSETS)).then(() => self.skipWaiting())
+    caches.open(CACHE_VERSION).then(async (cache) => {
+      const results = await Promise.allSettled(CORE_ASSETS.map((url) => cache.add(url)));
+      const failed = results
+        .map((r, i) => (r.status === 'rejected' ? CORE_ASSETS[i] : null))
+        .filter(Boolean);
+      if (failed.length) console.warn('[ESPAC sw] no se pudieron precachear en la instalación:', failed);
+      // NO se llama a self.skipWaiting() aquí a propósito: si la app sigue
+      // abierta en el teléfono mientras se publica una versión nueva, este
+      // Service Worker nuevo se queda "esperando" en vez de tomar control
+      // de inmediato — así app.js puede avisarle al encuestador ("hay una
+      // actualización") y dejar que decida el momento, en vez de que la
+      // app se recargue sola a mitad de un formulario sin guardar. Si el
+      // dispositivo cierra la app por completo y la reabre, esta espera no
+      // aplica: al no haber ninguna pestaña controlada por la versión
+      // vieja, la nueva se activa de inmediato, igual que antes.
+    })
   );
+});
+
+/* Permite que app.js dispare la activación inmediata cuando el
+   encuestador toca "Actualizar ahora" en el aviso de nueva versión. */
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
@@ -36,7 +64,13 @@ self.addEventListener('activate', (event) => {
 });
 
 /* Cache-first para el app shell y catálogos; las peticiones POST (envío de
-   datos al backend de Apps Script en sync.js) nunca pasan por aquí. */
+   datos al backend de Apps Script en sync.js) nunca pasan por aquí.
+   CRÍTICO: event.respondWith() nunca debe recibir undefined — si eso pasa,
+   Chrome muestra "No se puede acceder a este sitio" / ERR_FAILED, incluso
+   con la app instalada y el Service Worker activo. Por eso, si no hay red
+   NI copia en caché del recurso exacto pedido, respondemos con el app
+   shell (para navegaciones, como abrir la app) o con una respuesta vacía
+   válida (para todo lo demás) — nunca con undefined. */
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   event.respondWith(
@@ -46,7 +80,14 @@ self.addEventListener('fetch', (event) => {
         const copy = resp.clone();
         caches.open(CACHE_VERSION).then((cache) => cache.put(event.request, copy)).catch(() => {});
         return resp;
-      }).catch(() => cached);
+      }).catch(async () => {
+        const acceptsHtml = (event.request.headers.get('accept') || '').includes('text/html');
+        if (event.request.mode === 'navigate' || acceptsHtml) {
+          const shell = (await caches.match('./index.html')) || (await caches.match('./'));
+          if (shell) return shell;
+        }
+        return new Response('', { status: 503, statusText: 'Sin conexión y recurso no disponible en caché.' });
+      });
     })
   );
 });
