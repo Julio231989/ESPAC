@@ -22,6 +22,7 @@ const State = {
   profile: null,
   route: 'georef',
   params: {},
+  appVersion: '', // se completa sola desde el nombre de la caché activa — ver refreshAppVersion()
 };
 
 const ESPAC_YEAR_CODE = '26'; // Año 2026 — actualizar si el operativo continúa en años siguientes
@@ -122,15 +123,51 @@ function requireField(sel, valid, msg) {
 function gpsBoxHTML(prefix) {
   return `
   <div class="gps-box" id="gps-${prefix}">
+    <div class="gps-perm-warning" id="gps-perm-${prefix}" style="display:none;"></div>
     <button class="btn btn-field" id="gps-btn-${prefix}" type="button">${Icon.gps} Capturar ubicación GPS</button>
     <div class="gps-status" id="gps-status-${prefix}">Esperando captura…</div>
+    <button class="btn-link" id="gps-help-toggle-${prefix}" type="button">¿Cómo activo el permiso de ubicación o el GPS del teléfono?</button>
+    <div class="gps-help" id="gps-help-${prefix}" style="display:none;">
+      <p><b>Android (Chrome):</b> toque el candado 🔒 o el ícono de información junto a la dirección web, arriba → Permisos → Ubicación → Permitir. Si Android pregunta entre "Aproximada" y "Precisa", deje <b>Precisa</b> activada antes de aceptar — si no, el punto nunca bajará de ~100 m de precisión.</p>
+      <p><b>iPhone (Safari):</b> Ajustes del sistema → Privacidad y seguridad → Localización → Safari (sitios web) → Mientras se usa la app.</p>
+      <p><b>GPS del teléfono apagado:</b> esto el navegador no lo puede activar por usted — ábralo desde Ajustes → Ubicación (ícono de engranaje del sistema, no de la app) y actívelo ahí.</p>
+    </div>
+    <button class="btn-link" id="gps-manual-toggle-${prefix}" type="button">¿No logra señal GPS aquí? Escribir coordenadas a mano</button>
+    <div class="gps-manual" id="gps-manual-${prefix}" style="display:none;">
+      <p class="hint">Úselo solo si de verdad no hay señal (zonas de cobertura vegetal densa o relieve cerrado). Tome las coordenadas de otra fuente confiable — GPS dedicado, SWMaps, o el mapa satelital de otra app — y escríbalas aquí tal cual.</p>
+      <div class="field"><label>Latitud</label><input type="text" inputmode="decimal" id="gps-manual-lat-${prefix}" placeholder="Ej. -1.234567"></div>
+      <div class="field"><label>Longitud</label><input type="text" inputmode="decimal" id="gps-manual-lng-${prefix}" placeholder="Ej. -80.123456"></div>
+      <button class="btn btn-field" id="gps-manual-use-${prefix}" type="button">Usar estas coordenadas</button>
+    </div>
   </div>`;
 }
 
 function bindGpsBox(prefix) {
   const btn = $(`#gps-btn-${prefix}`);
   const status = $(`#gps-status-${prefix}`);
+  const permWarning = $(`#gps-perm-${prefix}`);
+  const helpToggle = $(`#gps-help-toggle-${prefix}`);
+  const helpBox = $(`#gps-help-${prefix}`);
+  const manualToggle = $(`#gps-manual-toggle-${prefix}`);
+  const manualBox = $(`#gps-manual-${prefix}`);
+  const manualLat = $(`#gps-manual-lat-${prefix}`);
+  const manualLng = $(`#gps-manual-lng-${prefix}`);
+  const manualUse = $(`#gps-manual-use-${prefix}`);
   let point = null;
+
+  function renderPermState(state) {
+    if (state === 'denied') {
+      permWarning.style.display = 'block';
+      permWarning.innerHTML = '🚫 El permiso de ubicación está bloqueado para esta app. Toque "¿Cómo activo el permiso…?" debajo para desbloquearlo — mientras esté bloqueado, el botón de captura no va a funcionar.';
+    } else {
+      permWarning.style.display = 'none';
+    }
+  }
+  // Chequeo silencioso al abrir el formulario, sin disparar el diálogo nativo.
+  Geo.checkPermission().then(renderPermState);
+  // Si el encuestador sale a Ajustes a desbloquearlo y vuelve, esto actualiza el aviso solo.
+  Geo.watchPermission(renderPermState);
+
   btn.addEventListener('click', async () => {
     btn.disabled = true;
     status.className = 'gps-status';
@@ -139,22 +176,53 @@ function bindGpsBox(prefix) {
       const p = await Geo.capturePoint({
         onUpdate: (reading) => { status.textContent = `Precisión actual: ${Math.round(reading.acc)} m (objetivo ≤ 30 m) — puede tardar más sin conexión`; }
       });
-      point = p;
+      point = { ...p, manual: false };
       if (p.precise) {
         status.className = 'gps-status good';
         status.innerHTML = `✓ Punto capturado — precisión ${Math.round(p.acc)} m<br>${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}`;
       } else {
         status.className = 'gps-status bad';
-        status.innerHTML = `⚠ Punto capturado fuera del objetivo — precisión ${Math.round(p.acc)} m<br>${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}<br>Puede guardarlo así o volver a capturar en espacio más abierto.`;
+        status.innerHTML = `⚠ Punto capturado fuera del objetivo — precisión ${Math.round(p.acc)} m<br>${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}<br>Si en Android le preguntó "Aproximada" vs "Precisa", revise que haya quedado en Precisa (vea la ayuda debajo). Puede guardarlo así o volver a capturar.`;
       }
       btn.textContent = 'Volver a capturar';
     } catch (e) {
       status.className = 'gps-status bad';
-      status.textContent = e.message || 'No se pudo obtener el punto GPS.';
+      if (e.code === 1) { // PERMISSION_DENIED
+        status.textContent = 'Permiso de ubicación bloqueado para esta app. Toque "¿Cómo activo el permiso…?" debajo.';
+        renderPermState('denied');
+      } else if (e.code === 2) { // POSITION_UNAVAILABLE
+        status.textContent = 'El teléfono no pudo obtener ninguna posición — normalmente significa que la ubicación (GPS) está apagada a nivel del sistema. Revise Ajustes → Ubicación. Si ya está activada, intente de nuevo en un espacio más abierto.';
+      } else {
+        status.textContent = (e.message || 'No se pudo obtener el punto GPS.') + ' Si sabe que en este punto nunca hay señal, use "Escribir coordenadas a mano" debajo.';
+      }
     } finally {
       btn.disabled = false;
     }
   });
+
+  helpToggle.addEventListener('click', () => {
+    helpBox.style.display = helpBox.style.display === 'none' ? 'block' : 'none';
+  });
+
+  manualToggle.addEventListener('click', () => {
+    manualBox.style.display = manualBox.style.display === 'none' ? 'block' : 'none';
+  });
+
+  manualUse.addEventListener('click', () => {
+    const lat = parseFloat(manualLat.value.trim().replace(',', '.'));
+    const lng = parseFloat(manualLng.value.trim().replace(',', '.'));
+    const latOk = Number.isFinite(lat) && lat >= -5 && lat <= 2;      // rango holgado de Ecuador continental + insular
+    const lngOk = Number.isFinite(lng) && lng >= -92 && lng <= -75;
+    if (!latOk || !lngOk) {
+      toast('Revise las coordenadas: deben ser números decimales dentro de Ecuador (ej. lat -1.23, lng -80.12).', 'err');
+      return;
+    }
+    point = { lat, lng, acc: null, alt: null, ts: Date.now(), precise: false, manual: true };
+    status.className = 'gps-status bad';
+    status.innerHTML = `✎ Coordenadas escritas a mano (sin GPS)<br>${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+    manualBox.style.display = 'none';
+  });
+
   return { getPoint: () => point };
 }
 
@@ -340,7 +408,9 @@ function bindGeorefScreen() {
       id: crypto.randomUUID(), _synced: false, _fecha: dISO,
       fecha: dISO, cod_ml: State.profile.nombre, provincia, cuestionario,
       id_personal: State.profile.id_personal, zona: State.profile.zona,
-      lat: point.lat, lng: point.lng, precision_m: Math.round(point.acc),
+      lat: point.lat, lng: point.lng,
+      precision_m: point.acc != null ? Math.round(point.acc) : '',
+      origen_coordenada: point.manual ? 'manual' : 'gps',
       enlace_maps: Geo.mapsLink(point.lat, point.lng),
       canton: matched ? matched.ct : '', parroquia: matched ? matched.pq : '',
       cod_completo_ml: matched ? matched.c : '',
@@ -353,6 +423,21 @@ function bindGeorefScreen() {
   });
 }
 
+/* Verifica si ESTE dispositivo ya tiene todo lo necesario para trabajar
+   sin señal: el Service Worker activo (controlando la página) y, en
+   caché, tanto el "esqueleto" de la app (index.html) como el marco de
+   lista completo (el archivo grande, el que más tarda en descargarse la
+   primera vez). Si algo falta, la causa casi siempre es la misma: este
+   celular nunca llegó a completar una primera carga con datos activos
+   desde la última actualización de la app. */
+async function checkOfflineReadiness() {
+  const result = { swActive: false, shellCached: false, catalogCached: false };
+  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) result.swActive = true;
+  try { result.shellCached = !!((await caches.match('./index.html')) || (await caches.match('./'))); } catch (e) {}
+  try { result.catalogCached = !!(await caches.match('./data/cuestionario_ml_2026.json')); } catch (e) {}
+  return result;
+}
+
 /* =========================================================================
    PANTALLA: Sincronización y ajustes
    ========================================================================= */
@@ -361,10 +446,23 @@ async function screenSyncHTML() {
   const pend = await dbCountPending('georef');
   const endpoint = await Sync.getEndpoint();
   const lastSync = await Sync.getLastSyncAt();
+  const ready = await checkOfflineReadiness();
+  const isReady = ready.swActive && ready.shellCached && ready.catalogCached;
 
   return `
   ${topHeaderHTML('Sincronización y ajustes')}
   <main>
+    <div class="card" id="offline-readiness-card">
+      <h3>¿Este celular está listo para trabajar sin señal?</h3>
+      ${isReady
+        ? `<div class="notice">✓ Sí. La app y el marco de lista completo ya están guardados en este dispositivo. Puede entrar a zonas sin cobertura con confianza.</div>`
+        : `<div class="notice err">
+             ⚠ Todavía no. Falta: ${[!ready.swActive && 'activar el modo offline', !ready.shellCached && 'guardar la app', !ready.catalogCached && 'descargar el marco de lista completo'].filter(Boolean).join(', ')}.<br>
+             <b>Solución:</b> con datos móviles o WiFi activados, deje esta pantalla abierta unos 10-15 segundos y vuelva a verificar. Si sigue en rojo, cierre la app por completo y vuelva a abrirla con señal.
+           </div>`}
+      <button class="btn btn-ghost" id="offline-readiness-check" style="margin-top:8px;">Verificar de nuevo</button>
+    </div>
+
     <div class="card">
       <h3>Backend (Google Apps Script)</h3>
       <p class="hint">Pegue aquí la URL /exec que entrega Apps Script al implementar el proyecto como aplicación web.</p>
@@ -393,12 +491,14 @@ async function screenSyncHTML() {
     <button class="btn btn-ghost" id="sync-profile" style="margin-top:10px;">Editar mis datos</button>
     <button class="btn btn-danger-ghost" id="sync-wipe" style="margin-top:10px;">Borrar todos los registros locales</button>
 
-    <div class="app-credit">ESPAC 2026 · Campo · Georreferencia ML<br>Desarrollado por Julio Márquez · WhatsApp 0962304236</div>
+    <div class="app-credit">ESPAC 2026 · Campo · Georreferencia ML · ${State.appVersion || 'detectando versión…'}<br>Desarrollado por Julio Márquez · WhatsApp 0962304236</div>
   </main>
   `;
 }
 
 function bindSyncScreen() {
+  $('#offline-readiness-check').addEventListener('click', () => navigate('sync'));
+
   $('#endpoint-save').addEventListener('click', async () => {
     const url = $('#endpoint-url').value.trim();
     const valid = /^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(url);
@@ -467,7 +567,7 @@ function topHeaderHTML(title) {
   <div class="topbar">
     <div class="topbar-row">
       ${showBack ? `<button class="icon-btn" id="btn-back">${Icon.back}</button>` : `<div class="brand-row"><img src="icons/icon-192.png" class="brand-ico" alt="ESPAC 2026"></div>`}
-      <div class="brand" style="align-items:flex-end; text-align:right;"><b>${title}</b><span>${ROLE_ML.label} · ${State.profile.nombre || ''}</span></div>
+      <div class="brand" style="align-items:flex-end; text-align:right;"><b>${title}</b><span>${ROLE_ML.label} · ${State.profile.nombre || ''}${State.appVersion ? ' · ' + State.appVersion : ''}</span></div>
       ${!showBack ? `<button class="icon-btn" id="btn-settings">${Icon.gear}</button>` : ''}
     </div>
   </div>`;
@@ -501,6 +601,76 @@ async function render() {
 }
 
 /* =========================================================================
+   Actualizaciones — avisa cuando hay una versión nueva en vez de recargar
+   sola: si el encuestador tiene un punto GPS recién capturado sin guardar,
+   una recarga automática se lo haría perder. En su lugar, se muestra un
+   aviso fijo abajo con un botón "Actualizar ahora" que el encuestador
+   toca cuando le convenga (lo ideal: entre un registro y el siguiente).
+   ========================================================================= */
+function showUpdateBanner(worker) {
+  if ($('#update-banner')) return;
+  const el = document.createElement('div');
+  el.id = 'update-banner';
+  el.className = 'update-banner';
+  el.innerHTML = `<span>Hay una versión nueva de la app.</span><button id="update-banner-btn" type="button">Actualizar ahora</button>`;
+  document.body.appendChild(el);
+  $('#update-banner-btn').addEventListener('click', () => {
+    if (!confirm('Si está a mitad de un registro sin guardar, se perderá. ¿Actualizar ahora?')) return;
+    worker.postMessage({ type: 'SKIP_WAITING' });
+    $('#update-banner-btn').textContent = 'Actualizando…';
+    $('#update-banner-btn').disabled = true;
+  });
+}
+
+function setupUpdateFlow(reg) {
+  if (reg.waiting) showUpdateBanner(reg.waiting);
+
+  reg.addEventListener('updatefound', () => {
+    const newWorker = reg.installing;
+    if (!newWorker) return;
+    newWorker.addEventListener('statechange', () => {
+      // 'installed' + ya había un controller = es una actualización sobre
+      // una versión anterior (no la primera instalación, que no necesita aviso).
+      if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+        showUpdateBanner(newWorker);
+      }
+    });
+  });
+
+  // Revisa si hay versión nueva cada vez que la app vuelve a primer plano
+  // con señal — no depende únicamente del chequeo periódico del navegador.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && navigator.onLine) reg.update().catch(() => {});
+  });
+
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloaded) return;
+    reloaded = true;
+    window.location.reload();
+  });
+}
+
+/* La versión visible se lee del nombre de la caché activa (p. ej.
+   "espac-campo-v17"), que sw.js crea con el mismo CACHE_VERSION que se
+   incrementa en cada publicación — así no hay que mantener un número de
+   versión duplicado a mano en dos archivos distintos. Si todavía no hay
+   ninguna caché (app recién abierta por primera vez, antes de que el
+   Service Worker termine de instalar), queda en blanco y no se muestra
+   nada hasta que se complete. */
+async function refreshAppVersion() {
+  if (!('caches' in window)) return;
+  try {
+    const keys = await caches.keys();
+    const v = keys.find(k => k.startsWith('espac-campo-v'));
+    if (v && v !== State.appVersion) {
+      State.appVersion = v.replace('espac-campo-', '');
+      render();
+    }
+  } catch (e) {}
+}
+
+/* =========================================================================
    Arranque
    ========================================================================= */
 async function boot() {
@@ -508,8 +678,9 @@ async function boot() {
   await loadProfile();
   await render();
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    navigator.serviceWorker.register('sw.js').then(setupUpdateFlow).catch(() => {});
   }
+  refreshAppVersion();
   AutoSync.init();
 }
 document.addEventListener('DOMContentLoaded', boot);

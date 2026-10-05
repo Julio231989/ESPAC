@@ -16,22 +16,62 @@ const Geo = {
   ACCURACY_THRESHOLD: 30, // metros — objetivo, no bloqueante
   CAPTURE_TIMEOUT_MS: 60000, // 60 s: cubre un "cold start" de GPS sin A-GPS (offline)
 
+  /* Consulta el permiso de ubicación SIN disparar el diálogo nativo (a
+     diferencia de llamar directamente a getCurrentPosition/watchPosition).
+     Devuelve 'granted' | 'denied' | 'prompt' | 'unsupported'. La Permissions
+     API no existe en todos los navegadores (Safari/iOS no la soporta para
+     geolocation) — en ese caso devolvemos 'unsupported' y la pantalla debe
+     limitarse al intento normal con su propio try/catch. */
+  async checkPermission() {
+    if (!('permissions' in navigator) || !navigator.permissions.query) return 'unsupported';
+    try {
+      const status = await navigator.permissions.query({ name: 'geolocation' });
+      return status.state;
+    } catch (e) {
+      return 'unsupported';
+    }
+  },
+
+  /* Se suscribe a cambios de permiso en vivo (por ejemplo, si el
+     encuestador sale a Ajustes, lo activa, y vuelve a la pestaña). Devuelve
+     una función para cancelar la suscripción, o null si no es soportado. */
+  async watchPermission(onChange) {
+    if (!('permissions' in navigator) || !navigator.permissions.query) return null;
+    try {
+      const status = await navigator.permissions.query({ name: 'geolocation' });
+      const handler = () => onChange(status.state);
+      status.addEventListener('change', handler);
+      return () => status.removeEventListener('change', handler);
+    } catch (e) {
+      return null;
+    }
+  },
+
   capturePoint({ onUpdate } = {}) {
     return new Promise((resolve, reject) => {
       if (!('geolocation' in navigator)) {
-        reject(new Error('Este dispositivo no expone geolocalización.'));
+        reject(new Error('Este dispositivo o navegador no permite obtener ubicación.'));
         return;
       }
       let watchId = null;
       let best = null;
-      const timeout = setTimeout(() => {
+      let settled = false;
+
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
         if (watchId !== null) navigator.geolocation.clearWatch(watchId);
         if (best) {
           resolve({ ...best, precise: best.acc <= Geo.ACCURACY_THRESHOLD });
         } else {
-          reject(new Error('No se obtuvo ninguna señal GPS en 60 s. Verifique que la ubicación esté activada y, si está sin conexión, aléjese de techos/paredes — el primer punto sin internet puede tardar más.'));
+          const e = new Error('No se obtuvo ninguna señal GPS en 60 s. Si está sin conexión, aléjese de techos/paredes — el primer punto sin internet puede tardar más. Si el problema persiste, use "Escribir coordenadas a mano".');
+          e.code = 'NO_FIX';
+          reject(e);
         }
-      }, Geo.CAPTURE_TIMEOUT_MS);
+      };
+
+      const timeout = setTimeout(finish, Geo.CAPTURE_TIMEOUT_MS);
 
       watchId = navigator.geolocation.watchPosition((pos) => {
         const reading = {
@@ -43,15 +83,17 @@ const Geo = {
         };
         if (!best || reading.acc < best.acc) best = reading;
         if (onUpdate) onUpdate(reading, best);
-        if (reading.acc <= Geo.ACCURACY_THRESHOLD) {
-          clearTimeout(timeout);
-          navigator.geolocation.clearWatch(watchId);
-          resolve({ ...reading, precise: true });
-        }
+        if (reading.acc <= Geo.ACCURACY_THRESHOLD) finish();
       }, (err) => {
+        if (settled) return;
+        // code 3 = TIMEOUT nativo del navegador: tratarlo igual que nuestro
+        // propio timeout (usar la mejor lectura que ya se tenga, si hay
+        // alguna), en vez de perder la captura entera por esta carrera.
+        if (err.code === 3) { finish(); return; }
+        settled = true;
         clearTimeout(timeout);
         if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-        reject(err);
+        reject(err); // conserva err.code: 1=PERMISSION_DENIED, 2=POSITION_UNAVAILABLE
       }, { enableHighAccuracy: true, maximumAge: 0, timeout: Geo.CAPTURE_TIMEOUT_MS });
     });
   },
