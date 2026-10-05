@@ -22,6 +22,7 @@ const State = {
   profile: null,
   route: 'georef',
   params: {},
+  appVersion: '', // se completa sola desde el nombre de la caché activa — ver refreshAppVersion()
 };
 
 const ESPAC_YEAR_CODE = '26'; // Año 2026 — actualizar si el operativo continúa en años siguientes
@@ -490,7 +491,7 @@ async function screenSyncHTML() {
     <button class="btn btn-ghost" id="sync-profile" style="margin-top:10px;">Editar mis datos</button>
     <button class="btn btn-danger-ghost" id="sync-wipe" style="margin-top:10px;">Borrar todos los registros locales</button>
 
-    <div class="app-credit">ESPAC 2026 · Campo · Georreferencia ML<br>Desarrollado por Julio Márquez · WhatsApp 0962304236</div>
+    <div class="app-credit">ESPAC 2026 · Campo · Georreferencia ML · ${State.appVersion || 'detectando versión…'}<br>Desarrollado por Julio Márquez · WhatsApp 0962304236</div>
   </main>
   `;
 }
@@ -566,7 +567,7 @@ function topHeaderHTML(title) {
   <div class="topbar">
     <div class="topbar-row">
       ${showBack ? `<button class="icon-btn" id="btn-back">${Icon.back}</button>` : `<div class="brand-row"><img src="icons/icon-192.png" class="brand-ico" alt="ESPAC 2026"></div>`}
-      <div class="brand" style="align-items:flex-end; text-align:right;"><b>${title}</b><span>${ROLE_ML.label} · ${State.profile.nombre || ''}</span></div>
+      <div class="brand" style="align-items:flex-end; text-align:right;"><b>${title}</b><span>${ROLE_ML.label} · ${State.profile.nombre || ''}${State.appVersion ? ' · ' + State.appVersion : ''}</span></div>
       ${!showBack ? `<button class="icon-btn" id="btn-settings">${Icon.gear}</button>` : ''}
     </div>
   </div>`;
@@ -650,6 +651,25 @@ function setupUpdateFlow(reg) {
   });
 }
 
+/* La versión visible se lee del nombre de la caché activa (p. ej.
+   "espac-campo-v17"), que sw.js crea con el mismo CACHE_VERSION que se
+   incrementa en cada publicación — así no hay que mantener un número de
+   versión duplicado a mano en dos archivos distintos. Si todavía no hay
+   ninguna caché (app recién abierta por primera vez, antes de que el
+   Service Worker termine de instalar), queda en blanco y no se muestra
+   nada hasta que se complete. */
+async function refreshAppVersion() {
+  if (!('caches' in window)) return;
+  try {
+    const keys = await caches.keys();
+    const v = keys.find(k => k.startsWith('espac-campo-v'));
+    if (v && v !== State.appVersion) {
+      State.appVersion = v.replace('espac-campo-', '');
+      render();
+    }
+  } catch (e) {}
+}
+
 /* =========================================================================
    Arranque
    ========================================================================= */
@@ -660,6 +680,7 @@ async function boot() {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').then(setupUpdateFlow).catch(() => {});
   }
+  refreshAppVersion();
   AutoSync.init();
 }
 document.addEventListener('DOMContentLoaded', boot);
